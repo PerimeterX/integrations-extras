@@ -2,6 +2,7 @@
 # All rights reserved
 # Licensed under a 3-clause BSD style license (see LICENSE)
 import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as DefusedET
 from datetime import datetime
 
 import requests
@@ -39,7 +40,7 @@ class Bind9Check(AgentCheck):
             self.service_check(self.BIND_SERVICE_CHECK, AgentCheck.CRITICAL, message="stats cannot be taken")
             raise
 
-        root = ET.fromstring(response.text)
+        root = DefusedET.fromstring(response.text)
         return root
 
     def DateTimeToEpoch(self, DateTime):
