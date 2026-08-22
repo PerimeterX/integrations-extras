@@ -245,6 +245,8 @@ class FilebeatCheck(AgentCheck):
 
     def _parse_registry_file(self, registry_file_path):
         try:
+            if ".." in registry_file_path:
+                raise Exception("Invalid file path")
             with open(registry_file_path) as registry_file:
                 return json.load(registry_file)
         except IOError as ex:
