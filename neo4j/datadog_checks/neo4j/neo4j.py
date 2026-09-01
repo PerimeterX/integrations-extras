@@ -1,8 +1,36 @@
+import re
 import requests
+from urllib.parse import urlparse, urlunparse
 from urllib3.util import Timeout
 
 from datadog_checks.base.checks import AgentCheck
 from datadog_checks.base.errors import CheckException
+
+
+def build_validated_url(base_url: str, port: int) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        # Validate port range
+        if not 1 <= port <= 65535:
+            raise ValueError("Invalid port")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        
+        # Rebuild URL with validated port
+        parsed = parsed._replace(netloc=f"{parsed.hostname}:{port}")
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class Neo4jCheck(AgentCheck):
@@ -150,7 +178,8 @@ class Neo4jCheck(AgentCheck):
         return host, port, user, password, timeout, server_name
 
     def _get_version(self, host, port, timeout, auth, service_check_tags):
-        version_url = '{}:{}/db/data/'.format(host, port)
+        base_url = '{}/db/data/'.format(host)
+        version_url = build_validated_url(base_url, port)
         headers_sent = {'Content-Type': 'application/json'}
         r = requests.get(version_url, auth=auth, headers=headers_sent, timeout=timeout)
         if r.status_code != 200:

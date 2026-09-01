@@ -1,15 +1,39 @@
 # stdlib
+import re
 from collections import namedtuple
 from distutils.version import LooseVersion
 
 # 3rd party
 import requests
 from six import iteritems
-from six.moves.urllib.parse import urljoin, urlparse
+from six.moves.urllib.parse import urljoin, urlparse, urlunparse
 
 # project
 from datadog_checks.base import AgentCheck
 from datadog_checks.base.utils.headers import headers
+
+
+def build_validated_url(base_url: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["example.com"]  # add your allowed domains here
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
+
 
 EVENT_TYPE = SOURCE_TYPE_NAME = 'logstash'
 
@@ -155,8 +179,9 @@ class LogstashCheck(AgentCheck):
             cert = None
 
         try:
+            validated_url = build_validated_url(url)
             resp = requests.get(
-                url, timeout=config.timeout, headers=headers(self.agentConfig), auth=auth, verify=verify, cert=cert
+                validated_url, timeout=config.timeout, headers=headers(self.agentConfig), auth=auth, verify=verify, cert=cert
             )
             resp.raise_for_status()
         except Exception as e:

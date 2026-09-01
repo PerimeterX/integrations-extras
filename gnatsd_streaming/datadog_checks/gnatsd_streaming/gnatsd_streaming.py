@@ -2,13 +2,44 @@
 # All rights reserved
 # Licensed under Simplified BSD License (see LICENSE)
 
+import re
 import time
+from urllib.parse import urlparse, urlunparse, urlencode
 
 import requests
 
 from datadog_checks.base import AgentCheck
 
 EVENT_TYPE = SOURCE_TYPE_NAME = 'gnatsd_streaming'
+
+
+def build_validated_url(base_url: str, endpoint: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["example.com"]  # add your allowed domains here
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        
+        # Validate path parameter
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", endpoint):
+            raise ValueError("Invalid parameter")
+        
+        # Rebuild path from fixed literals + validated segments
+        parsed = parsed._replace(path=f"{parsed.path}/{endpoint}")
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class GnatsdStreamingConfig:
@@ -102,7 +133,8 @@ class GnatsdStreamingCheckInvocation:
         if pagination:
             params.update(pagination)
 
-        data = requests.get(self.config.url + '/' + endpoint, params).json()
+        url = build_validated_url(self.config.url, endpoint)
+        data = requests.get(url, params).json()
         self._track_metrics(endpoint, metrics, data)
 
         if data.get('count', 0) > 0:
