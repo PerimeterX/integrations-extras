@@ -2,11 +2,40 @@
 # All rights reserved
 # Licensed under Simplified BSD License (see LICENSE)
 
+import re
 import requests
+from urllib.parse import urlparse, urlunparse
 
 from datadog_checks.base import AgentCheck
 
 EVENT_TYPE = SOURCE_TYPE_NAME = 'gnatsd'
+
+
+def build_validated_url(base_url: str, endpoint: str) -> str:
+    try:
+        # Validate path parameter
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", endpoint):
+            raise ValueError("Invalid parameter")
+        
+        parsed = urlparse(base_url)
+        
+        # Rebuild path from fixed literal + validated segment
+        if parsed.path and parsed.path != '/':
+            # Preserve existing path and append endpoint
+            path = parsed.path.rstrip('/') + '/' + endpoint
+        else:
+            # No existing path or just root
+            path = '/' + endpoint
+        
+        # Check for path traversal after construction
+        if "/../" in path or re.search(r"/%2e%2e/", path, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = parsed._replace(path=path)
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class GnatsdConfig:
@@ -97,7 +126,8 @@ class GnatsdCheckInvocation:
             raise e
 
     def _check_endpoint(self, endpoint, metrics):
-        data = requests.get('{}/{}'.format(self.config.url, endpoint)).json()
+        url = build_validated_url(self.config.url, endpoint)
+        data = requests.get(url).json()
         self._track_metrics(endpoint, metrics, data)
 
     def _track_metrics(self, namespace, metrics, data, tags=None):

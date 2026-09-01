@@ -2,6 +2,8 @@
 # All rights reserved
 # Licensed under Simplified BSD License (see LICENSE)
 import json
+import re
+from urllib.parse import urlparse, urlunparse, urlencode
 
 import requests
 from six import PY3
@@ -245,8 +247,39 @@ class StormCheck(AgentCheck):
                     return self.patch < other.patch
             return True
 
-    def get_request_json(self, url_part, error_message, params=None):
-        url = "{}{}".format(self.nimbus_server, url_part)
+    def build_validated_url(self, base_url, url_part, topology_id=None):
+        try:
+            # Minimal path validation
+            if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+                raise ValueError("Invalid path")
+            
+            parsed = urlparse(base_url)
+            
+            # Protocol + host checks
+            if parsed.scheme not in ("http", "https"):
+                raise ValueError("Invalid protocol")
+            if not parsed.hostname:
+                raise ValueError("Invalid host")
+            
+            # Validate topology_id if provided
+            if topology_id:
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", topology_id):
+                    raise ValueError("Invalid parameter")
+                # Build path with validated topology_id, preserving base path
+                base_path = parsed.path.rstrip('/')
+                new_path = url_part.format(topology_id)
+                parsed = parsed._replace(path=base_path + new_path)
+            else:
+                # Append url_part to existing path
+                base_path = parsed.path.rstrip('/')
+                parsed = parsed._replace(path=base_path + url_part)
+            
+            return urlunparse(parsed)
+        except Exception:
+            raise ValueError("Invalid URL")
+
+    def get_request_json(self, url_part, error_message, params=None, topology_id=None):
+        url = self.build_validated_url(self.nimbus_server, url_part, topology_id=topology_id)
         try:
             self.log.debug("Fetching url %s", url)
             if params:
@@ -316,9 +349,10 @@ class StormCheck(AgentCheck):
         self.log.debug("Retrieving Topology Info. Id: %s", topology_id)
         params = {'window': interval}
         return self.get_request_json(
-            "/api/v1/topology/{}".format(topology_id),
+            "/api/v1/topology/{}",
             "Error retrieving Storm Topology Info for topology:{}".format(topology_id),
             params=params,
+            topology_id=topology_id,
         )
 
     def get_topology_metrics(self, topology_id, interval=60, storm_version=None):
@@ -339,9 +373,10 @@ class StormCheck(AgentCheck):
 
         params = {'window': interval}
         return self.get_request_json(
-            endpoint.format(topology_id),
+            endpoint,
             "Error retrieving Storm Topology Metrics for topology:{}".format(topology_id),
             params=params,
+            topology_id=topology_id,
         )
 
     def process_cluster_stats(self, cluster_stats):
