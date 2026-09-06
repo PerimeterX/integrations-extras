@@ -1,9 +1,10 @@
 # (C) Datadog, Inc. 2018
 # All rights reserved
 # Licensed under a 3-clause BSD style license (see LICENSE)
+import re
 import requests
 import simplejson as json
-from six.moves.urllib.parse import urljoin
+from six.moves.urllib.parse import urljoin, urlparse, urlunparse
 
 from datadog_checks.base import AgentCheck, ConfigurationError
 
@@ -31,6 +32,37 @@ STATUS_METRICS = [
         },
     ),
 ]
+
+
+def build_validated_url(base_url: str, route: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        if "/../" in route or re.search(r"/%2e%2e/", route, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["example.com"]  # add your allowed domains here
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        
+        # Combine base path with route
+        base_path = parsed.path.rstrip('/')
+        route_path = route if route.startswith('/') else '/' + route
+        combined_path = base_path + route_path
+        
+        parsed = parsed._replace(path=combined_path)
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class AquaCheck(AgentCheck):
@@ -96,7 +128,7 @@ class AquaCheck(AgentCheck):
         Form queries and interact with the Aqua API.
         """
         headers = {'Content-Type': 'application/json', 'charset': 'UTF-8', 'Authorization': 'Bearer ' + token}
-        res = requests.get(urljoin(instance['url'], route), headers=headers, timeout=60)
+        res = requests.get(build_validated_url(instance['url'], route), headers=headers, timeout=60)
         res.raise_for_status()
         return json.loads(res.text)
 
