@@ -1,5 +1,6 @@
 import base64
 import re
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -98,6 +99,31 @@ _g_bd_specific_map = {
 }
 
 
+def build_validated_url(base_url: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+
+        parsed = urlparse(base_url)
+
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["example.com"]  # add your allowed domains here
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+
+        # Rebuild path with fixed endpoint
+        parsed = parsed._replace(path=f"{parsed.path.rstrip('/')}/admin/status")
+
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
+
+
 class StardogCheck(AgentCheck):
     def _process_doc(self, doc, metrics, tags, add_db_tags=False):
         for k in doc:
@@ -125,7 +151,7 @@ class StardogCheck(AgentCheck):
         try:
             auth_token = base64.b64encode(ensure_bytes(instance['username'] + ":" + instance['password']))
             response = requests.get(
-                instance['stardog_url'] + '/admin/status', headers={'Authorization': 'Basic {}'.format(auth_token)}
+                build_validated_url(instance['stardog_url']), headers={'Authorization': 'Basic {}'.format(auth_token)}
             )
         except KeyError:
             raise Exception('The Stardog check instance is not properly configured')

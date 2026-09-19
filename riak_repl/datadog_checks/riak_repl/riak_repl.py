@@ -1,11 +1,35 @@
 import json
+import re
 import unicodedata
+from urllib.parse import urlparse, urlunparse
 
 import requests
 from six import iteritems
 
 from datadog_checks.base import AgentCheck
 from datadog_checks.base.errors import CheckException
+
+
+def build_validated_url(base_url: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+
+        parsed = urlparse(base_url)
+
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["example.com"]  # add your allowed domains here
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class RiakReplCheck(AgentCheck):
@@ -69,7 +93,12 @@ class RiakReplCheck(AgentCheck):
             raise CheckException("Configuration error, please fix conf.yaml")
 
         try:
-            r = requests.get(url, timeout=timeout)
+            validated_url = build_validated_url(url)
+        except ValueError:
+            raise CheckException("Invalid URL configuration")
+
+        try:
+            r = requests.get(validated_url, timeout=timeout)
         except requests.exceptions.Timeout:
             raise CheckException('URL: {} timed out after {} seconds.'.format(url, timeout))
         except requests.exceptions.ConnectionError as e:
