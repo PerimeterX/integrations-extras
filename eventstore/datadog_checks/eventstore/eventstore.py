@@ -6,6 +6,7 @@ import datetime
 import fnmatch
 import re
 from collections import defaultdict
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -13,6 +14,36 @@ from datadog_checks.base import AgentCheck
 from datadog_checks.base.errors import CheckException
 
 from .metrics import ALL_METRICS
+
+
+def build_validated_url(base_url: str, endpoint: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        
+        # Validate endpoint parameter
+        if not re.fullmatch(r"[A-Za-z0-9_/.-]+", endpoint):
+            raise ValueError("Invalid parameter")
+        if "/../" in endpoint or re.search(r"/%2e%2e/", endpoint, re.IGNORECASE):
+            raise ValueError("Invalid parameter")
+        
+        # Rebuild path from base path + validated endpoint
+        base_path = parsed.path.rstrip('/')
+        endpoint_clean = endpoint if endpoint.startswith('/') else '/' + endpoint
+        parsed = parsed._replace(path=base_path + endpoint_clean)
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class EventStoreCheck(AgentCheck):
@@ -34,7 +65,7 @@ class EventStoreCheck(AgentCheck):
     def check_endpoint(self, instance, endpoint, metrics):
         """ Process metrics from an API endpoint """
         base_url = instance.get('url', '')
-        url = base_url + endpoint
+        url = build_validated_url(base_url, endpoint)
         default_timeout = instance.get('default_timeout', 5)
         timeout = float(instance.get('timeout', default_timeout))
         tag_by_url = instance.get('tag_by_url', False)

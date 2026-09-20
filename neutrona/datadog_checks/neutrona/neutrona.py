@@ -1,10 +1,75 @@
 import json
+import re
+from urllib.parse import urlparse, urlunparse, urlencode
 
 import requests
 from requests import RequestException
 
 from datadog_checks.base import AgentCheck
 from datadog_checks.base.errors import CheckException
+
+
+def build_azure_management_url(base_url: str, subscription_id: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["management.azure.com", "login.microsoftonline.com"]
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        
+        # Validate path parameters
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", subscription_id):
+            raise ValueError("Invalid parameter")
+        
+        # Rebuild path from fixed literals + validated segments
+        parsed = parsed._replace(path=f"/subscriptions/{subscription_id}/providers/Microsoft.Network/expressRouteCircuits")
+        
+        # Add query parameters
+        query = {"api-version": "2018-08-01"}
+        parsed = parsed._replace(query=urlencode(query))
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
+
+
+def build_neutrona_api_url(base_url: str, service_key: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["expressroutetelemetry.neutrona.com"]
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        
+        # Validate path parameters
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", service_key):
+            raise ValueError("Invalid parameter")
+        
+        # Rebuild path from fixed literals + validated segments
+        # Preserving the original ?= pattern in the path
+        parsed = parsed._replace(path=f"/client/?={service_key}")
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class NeutronaCheck(AgentCheck):
@@ -70,17 +135,7 @@ class NeutronaCheck(AgentCheck):
         # EXPRESS ROUTE CROSS CONNECTIONS
         try:
             response = requests.get(
-                ''.join(
-                    [
-                        azure_management_url.strip('/'),
-                        '/subscriptions/',
-                        subscription_id,
-                        '/providers/Microsoft.Network',
-                        '/expressRouteCircuits',
-                        '?api-version=',
-                        '2018-08-01',
-                    ]
-                ),
+                build_azure_management_url(azure_management_url, subscription_id),
                 headers={'Authorization': ' '.join(['Bearer', azure_access_token])},
             )
         except RequestException:
@@ -110,7 +165,7 @@ class NeutronaCheck(AgentCheck):
                         # NEUTRONA TELEMETRY DATA
                         try:
                             response = requests.get(
-                                ''.join([neutrona_express_route_api_url.strip('/'), '/client/?=', service_key]),
+                                build_neutrona_api_url(neutrona_express_route_api_url, service_key),
                                 # headers={
                                 #    'Authorization': ' '.join(['Bearer', '']),
                                 # }
