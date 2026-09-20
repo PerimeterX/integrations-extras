@@ -1,8 +1,36 @@
+import re
 import requests
+from urllib.parse import urlparse, urlunparse
 from urllib3.util import Timeout
 
 from datadog_checks.base.checks import AgentCheck
 from datadog_checks.base.errors import CheckException
+
+
+def build_validated_url(base_url: str, port: int, path: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        
+        # Validate port
+        if not 1 <= port <= 65535:
+            raise ValueError("Invalid port")
+        
+        # Rebuild URL with validated port and path
+        parsed = parsed._replace(netloc=f"{parsed.hostname}:{port}", path=path)
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class Neo4jCheck(AgentCheck):
@@ -107,9 +135,9 @@ class Neo4jCheck(AgentCheck):
             version = self._get_version(host, port, timeout, auth, service_check_tags)
 
             if version > 2:
-                check_url = "{}:{}/db/data/transaction/commit".format(host, port)
+                check_url = build_validated_url(host, port, "/db/data/transaction/commit")
             else:
-                check_url = "{}:{}/v1/service/metrics".format(host, port)
+                check_url = build_validated_url(host, port, "/v1/service/metrics")
             r = requests.post(check_url, auth=auth, json=payload, timeout=timeout)
         except Exception as e:
             msg = "Unable to fetch Neo4j stats: {}".format(e)
@@ -150,7 +178,7 @@ class Neo4jCheck(AgentCheck):
         return host, port, user, password, timeout, server_name
 
     def _get_version(self, host, port, timeout, auth, service_check_tags):
-        version_url = '{}:{}/db/data/'.format(host, port)
+        version_url = build_validated_url(host, port, "/db/data/")
         headers_sent = {'Content-Type': 'application/json'}
         r = requests.get(version_url, auth=auth, headers=headers_sent, timeout=timeout)
         if r.status_code != 200:
