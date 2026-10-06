@@ -2,13 +2,37 @@
 # All rights reserved
 # Licensed under Simplified BSD License (see LICENSE)
 
+import re
 import time
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
 from datadog_checks.base import AgentCheck
 
 EVENT_TYPE = SOURCE_TYPE_NAME = 'gnatsd_streaming'
+
+
+def build_validated_url(base_url: str, path_segment: str = "") -> str:
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        
+        if path_segment:
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", path_segment):
+                raise ValueError("Invalid parameter")
+            parsed = parsed._replace(path=parsed.path + "/" + path_segment)
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class GnatsdStreamingConfig:
@@ -63,7 +87,7 @@ class GnatsdStreamingCheckInvocation:
 
     def _status_check(self):
         try:
-            response = requests.get(self.config.url)
+            response = requests.get(build_validated_url(self.config.url))
 
             if response.status_code == 200:
                 self.checker.service_check(self.SERVICE_CHECK_NAME, AgentCheck.OK, tags=self.service_check_tags)
@@ -77,7 +101,7 @@ class GnatsdStreamingCheckInvocation:
             raise e
 
     def _failover_check(self):
-        response = requests.get(self.config.url + '/serverz').json()
+        response = requests.get(build_validated_url(self.config.url, "serverz")).json()
         if self.checker.ft_status is None:
             # our first run through we just remember the state for later
             self.checker.ft_status = response['state']
@@ -102,7 +126,7 @@ class GnatsdStreamingCheckInvocation:
         if pagination:
             params.update(pagination)
 
-        data = requests.get(self.config.url + '/' + endpoint, params).json()
+        data = requests.get(build_validated_url(self.config.url, endpoint), params).json()
         self._track_metrics(endpoint, metrics, data)
 
         if data.get('count', 0) > 0:

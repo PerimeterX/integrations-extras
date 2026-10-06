@@ -10,6 +10,7 @@ import numbers
 import os
 import re
 import sre_constants
+from urllib.parse import urlparse, urlunparse
 
 import requests
 from six import iteritems
@@ -18,6 +19,25 @@ from datadog_checks.base import AgentCheck, is_affirmative
 from datadog_checks.base.utils.containers import hash_mutable
 
 EVENT_TYPE = SOURCE_TYPE_NAME = "filebeat"
+
+
+def build_validated_url(base_url: str) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        
+        parsed = urlparse(base_url)
+        
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class FilebeatCheckHttpProfiler:
@@ -99,7 +119,8 @@ class FilebeatCheckHttpProfiler:
 
     def _make_request(self):
 
-        response = requests.get(self._config.stats_endpoint, timeout=self._config.timeout)
+        validated_url = build_validated_url(self._config.stats_endpoint)
+        response = requests.get(validated_url, timeout=self._config.timeout)
         response.raise_for_status()
 
         return self.flatten(response.json())
