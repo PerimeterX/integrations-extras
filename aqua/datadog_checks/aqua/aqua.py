@@ -1,9 +1,10 @@
 # (C) Datadog, Inc. 2018
 # All rights reserved
 # Licensed under a 3-clause BSD style license (see LICENSE)
+import re
 import requests
 import simplejson as json
-from six.moves.urllib.parse import urljoin
+from six.moves.urllib.parse import urljoin, urlparse, urlunparse
 
 from datadog_checks.base import AgentCheck, ConfigurationError
 
@@ -31,6 +32,23 @@ STATUS_METRICS = [
         },
     ),
 ]
+
+
+def build_validated_url(base_url):
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["example.com"]  # add your allowed domains here
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class AquaCheck(AgentCheck):
@@ -81,8 +99,9 @@ class AquaCheck(AgentCheck):
         """
         headers = {'Content-Type': 'application/json', 'charset': 'UTF-8'}
         data = {"id": str(instance['api_user']), "password": str(instance['password'])}
+        validated_base_url = build_validated_url(instance['url'])
         res = requests.post(
-            instance['url'] + '/api/v1/login',
+            validated_base_url + '/api/v1/login',
             data=json.dumps(data),
             headers=headers,
             timeout=self.default_integration_http_timeout,
