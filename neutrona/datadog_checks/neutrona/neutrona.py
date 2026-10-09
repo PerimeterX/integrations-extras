@@ -1,10 +1,48 @@
 import json
+import re
+from urllib.parse import urlparse, urlunparse, urlencode
 
 import requests
 from requests import RequestException
 
 from datadog_checks.base import AgentCheck
 from datadog_checks.base.errors import CheckException
+
+
+def build_validated_url(
+    base_url: str,
+    directory_id: str,
+) -> str:
+    try:
+        # Minimal path validation
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+
+        parsed = urlparse(base_url)
+
+        # Protocol + host checks
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["login.microsoftonline.com", "expressroutetelemetry.neutrona.com", "management.azure.com"]
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+
+        # Validate path parameters
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", directory_id):
+            raise ValueError("Invalid parameter")
+
+        # Rebuild path from fixed literals + validated segments
+        parsed = parsed._replace(path=f"/{directory_id}/oauth2/token")
+
+        # Add query parameters
+        query = {"api-version": "1.0"}
+        parsed = parsed._replace(query=urlencode(query))
+
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class NeutronaCheck(AgentCheck):
@@ -34,7 +72,7 @@ class NeutronaCheck(AgentCheck):
 
         try:
             response = requests.post(
-                '/'.join([azure_authentication_url.strip('/'), directory_id, 'oauth2/token?api-version=1.0']),
+                build_validated_url(azure_authentication_url, directory_id),
                 data={
                     'grant_type': 'client_credentials',
                     'resource': 'https://management.core.windows.net/',

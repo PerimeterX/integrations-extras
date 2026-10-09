@@ -1,7 +1,23 @@
+import re
 import requests
+from urllib.parse import urlparse, urlunparse
 
 from datadog_checks.base import AgentCheck
 from datadog_checks.base.utils.headers import headers
+
+
+def build_validated_url(base_url: str) -> str:
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class NextcloudCheck(AgentCheck):
@@ -49,7 +65,8 @@ class NextcloudCheck(AgentCheck):
 
         try:
             self.log.debug("Checking against %s", url)
-            response = requests.get(url, auth=auth, headers=headers(self.agentConfig))
+            validated_url = build_validated_url(url)
+            response = requests.get(validated_url, auth=auth, headers=headers(self.agentConfig))
             if response.status_code != 200:
                 self.service_check(
                     NextcloudCheck.STATUS_CHECK, AgentCheck.CRITICAL, message="Problem requesting {}.".format(url)

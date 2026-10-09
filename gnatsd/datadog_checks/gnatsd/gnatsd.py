@@ -2,11 +2,30 @@
 # All rights reserved
 # Licensed under Simplified BSD License (see LICENSE)
 
+import re
 import requests
+from urllib.parse import urlparse, urlunparse
 
 from datadog_checks.base import AgentCheck
 
 EVENT_TYPE = SOURCE_TYPE_NAME = 'gnatsd'
+
+
+def build_validated_url(base_url: str) -> str:
+    try:
+        if "/../" in base_url or re.search(r"/%2e%2e/", base_url, re.IGNORECASE):
+            raise ValueError("Invalid path")
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("Invalid protocol")
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        allowed_domains = ["example.com"]  # add your allowed domains here
+        if parsed.hostname.lower() not in allowed_domains:
+            raise ValueError("Invalid host")
+        return urlunparse(parsed)
+    except Exception:
+        raise ValueError("Invalid URL")
 
 
 class GnatsdConfig:
@@ -83,7 +102,7 @@ class GnatsdCheckInvocation:
 
     def _status_check(self):
         try:
-            response = requests.get(self.config.url)
+            response = requests.get(build_validated_url(self.config.url))
 
             if response.status_code == 200:
                 self.checker.service_check(self.SERVICE_CHECK_NAME, AgentCheck.OK, tags=self.service_check_tags)
